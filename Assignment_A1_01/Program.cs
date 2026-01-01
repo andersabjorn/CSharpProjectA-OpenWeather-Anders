@@ -1,5 +1,7 @@
 ﻿using Assignment_A1_01.Models;
 using Assignment_A1_01.Services;
+using System.Text.Json;
+
 
 namespace Assignment_A1_01;
 
@@ -7,8 +9,8 @@ internal class Program
 {
     static async Task Main(string[] args)
     {
-        // Sätt din API-nyckel här (bara själva strängen)
-        var apiKey = "32faebcb07d93fd7f54722cb16d3209b";
+        var apiKey = ReadApiKey() ?? "PUT_YOUR_API_KEY_HERE";
+
 
         var service = new OpenWeatherService(apiKey);
 
@@ -97,4 +99,30 @@ internal class Program
             Console.WriteLine();
         }
     }
+        private static string? ReadApiKey()
+    {
+        try
+        {
+            // Project root: .../Assignment_A1_01/appsettings.local.json
+            var path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "appsettings.local.json");
+            path = Path.GetFullPath(path);
+
+            if (!File.Exists(path))
+                return null;
+
+            var json = File.ReadAllText(path);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+
+            return doc.RootElement
+                .GetProperty("OpenWeather")
+                .GetProperty("ApiKey")
+                .GetString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
 }
+
