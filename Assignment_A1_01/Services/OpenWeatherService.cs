@@ -1,40 +1,101 @@
-﻿using Newtonsoft.Json;
+﻿using System.Collections.Concurrent;
+using System.Net;
+using Newtonsoft.Json;
 using Assignment_A1_01.Models;
+using Assignment_A1_01.Utils;
 
 namespace Assignment_A1_01.Services;
 
 public class OpenWeatherService
 {
-    HttpClient _httpClient = new HttpClient();
-    readonly string _apiKey = "your_api_key_here"; // Replace with your OpenWeatherMap API key
+    private readonly string _apiKey;
+    private readonly HttpClient _httpClient = new HttpClient();
 
-    public async Task<Forecast> GetForecastAsync(double latitude, double longitude)
+    // Cache: key -> (time, forecast)
+    private readonly ConcurrentDictionary<string, (DateTime Time, Forecast Forecast)> _cache = new();
+
+    public OpenWeatherService(string apiKey)
     {
-        //https://openweathermap.org/current
-        var language = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
-        var uri = $"https://api.openweathermap.org/data/2.5/forecast?lat={latitude}&lon={longitude}&units=metric&lang={language}&appid={_apiKey}";
+        _apiKey = apiKey;
+    }
 
-        HttpResponseMessage response = await _httpClient.GetAsync(uri);
-        response.EnsureSuccessStatusCode();
-        
-        //Convert Json to NewsResponse
-        string content = await response.Content.ReadAsStringAsync();
-        WeatherApiData wd = JsonConvert.DeserializeObject<WeatherApiData>(content);
+    // A1.2/A1.3: Event
+    public event EventHandler<string>? ForecastReceived;
 
-        //Convert WeatherApiData to Forecast using Linq.
-        //Your code
-        //Hint: you will find 
-        //City: wd.city.name
-        //Daily forecast in wd.list, in an item in the list
-        //      Date and time in Unix timestamp: dt 
-        //      Temperature: main.temp
-        //      WindSpeed: wind.speed
-        //      Description:  first item in weather[].description
-        //      Icon:  $"http://openweathermap.org/img/w/{wdle.weather.First().icon}.png"   //NOTE: Not necessary, only if you like to use an icon
+    private void OnForecastReceived(string message)
+        => ForecastReceived?.Invoke(this, message);
 
-        var forecast = new Forecast(); //dummy to compile, replaced by your own code
+    private static string BuildGeoKey(double lat, double lon)
+        => $"geo:{lat:F4},{lon:F4}";
+
+    private static string BuildCityKey(string city)
+        => $"city:{city.ToLowerInvariant()}";
+
+    // A1.1/A1.2/A1.3 – geolocation
+    public Task<Forecast> GetForecastAsync(double lat, double lon)
+    {
+        string cacheKey = BuildGeoKey(lat, lon);
+        string url =
+            $"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={_apiKey}&units=metric&lang=se";
+
+        return GetForecastWithCacheAsync(cacheKey, url, $"lat {lat}, lon {lon}");
+    }
+
+    // A1.2/A1.3 – city
+    public Task<Forecast> GetForecastByCityAsync(string city)
+    {
+        string cacheKey = BuildCityKey(city);
+        string url =
+            $"https://api.openweathermap.org/data/2.5/forecast?q={Uri.EscapeDataString(city)}&appid={_apiKey}&units=metric&lang=se";
+
+        return GetForecastWithCacheAsync(cacheKey, url, city);
+    }
+
+    private async Task<Forecast> GetForecastWithCacheAsync(string cacheKey, string url, string identifier)
+    {
+        // A1.3 – cache i 1 minut
+        if (_cache.TryGetValue(cacheKey, out var cached) &&
+            DateTime.Now - cached.Time < TimeSpan.FromMinutes(1))
+        {
+            OnForecastReceived($"Cached weather forecast for {identifier} available");
+            return cached.Forecast;
+        }
+
+        var response = await _httpClient.GetAsync(url);
+        var json = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            // Om stad ej hittas: ge ett tydligt fel
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                throw new Exception($"City not found: {identifier}");
+
+            // 401 osv
+            throw new Exception($"Weather service error ({(int)response.StatusCode} {response.StatusCode}): {json}");
+        }
+
+        var data = JsonConvert.DeserializeObject<WeatherApiData>(json)
+                   ?? throw new Exception("Could not parse weather response.");
+
+        var items = data.list
+            .Select(x => new ForecastItem
+            {
+                DateTime = UnixTimeStampHelper.UnixTimeStampToDateTime(x.dt),
+                Description = x.weather.FirstOrDefault()?.description ?? "",
+                Temperature = x.main.temp,
+                WindSpeed = x.wind.speed
+            })
+            .ToList();
+
+        var forecast = new Forecast
+        {
+            CityName = data.city.name,
+            Items = items
+        };
+
+        _cache[cacheKey] = (DateTime.Now, forecast);
+
+        OnForecastReceived($"New weather forecast for {identifier} available");
         return forecast;
     }
-    private DateTime UnixTimeStampToDateTime(double unixTimeStamp) => DateTime.UnixEpoch.AddSeconds(unixTimeStamp).ToLocalTime();
 }
-

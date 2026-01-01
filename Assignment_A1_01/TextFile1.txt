@@ -1,0 +1,5 @@
+﻿{
+  "OpenWeather": {
+    "ApiKey": "32faebcb07d93fd7f54722cb16d3209b"
+  }
+}

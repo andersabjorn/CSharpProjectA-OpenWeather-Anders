@@ -2,7 +2,6 @@
 
 public class Forecast
 {
-    public string City { get; set; }
-    public List<ForecastItem> Items { get; set; }
+    public string CityName { get; set; } = "";
+    public List<ForecastItem> Items { get; set; } = new();
 }
-
